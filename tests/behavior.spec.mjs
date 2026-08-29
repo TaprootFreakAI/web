@@ -565,6 +565,7 @@ test.describe('account-merge flow', () => {
     });
     await page.goto('/account-merge/?otp=');
     await expect(page.locator('#state-invalid')).toBeVisible();
+    await expect(page.locator('#state-loading')).toBeHidden();
     expect(confirmCalls).toEqual([]);
   });
 
@@ -576,21 +577,30 @@ test.describe('account-merge flow', () => {
     await expect(page.locator('#state-invalid')).toBeVisible();
   });
 
-  test('a 202 ticket already DeadLetter skips job polling and shows unavailable', async ({ page }) => {
+  test('a 202 ticket already DeadLetter skips job polling and shows unavailable', async ({
+    page,
+  }) => {
+    let confirmCalls = 0;
     let jobCalls = 0;
-    await page.route(MERGE_CONFIRM_ENDPOINT, (route) =>
+    await page.route(MERGE_CONFIRM_ENDPOINT, (route) => {
+      confirmCalls += 1;
       route.fulfill({
         status: 202,
         contentType: 'application/json',
-        body: JSON.stringify({ uid: 'job-1', status: 'DeadLetter', expectedSeconds: 2 }),
-      }),
-    );
+        body: JSON.stringify({
+          uid: 'job-1',
+          status: 'DeadLetter',
+          expectedSeconds: 2,
+        }),
+      });
+    });
     await page.route(MERGE_JOB_ENDPOINT, (route) => {
       jobCalls += 1;
       route.fulfill({ status: 200, contentType: 'application/json', body: '{}' });
     });
     await page.goto('/account-merge/?otp=abc');
     await expect(page.locator('#state-unavailable')).toBeVisible({ timeout: 10000 });
+    expect(confirmCalls).toBe(1);
     expect(jobCalls).toBe(0);
   });
 
