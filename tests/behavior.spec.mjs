@@ -605,22 +605,28 @@ test.describe('account-merge flow', () => {
   });
 
   test('a job that becomes Failed after polling shows unavailable', async ({ page }) => {
-    await page.route(MERGE_CONFIRM_ENDPOINT, (route) =>
+    let confirmCalls = 0;
+    let jobCalls = 0;
+    await page.route(MERGE_CONFIRM_ENDPOINT, (route) => {
+      confirmCalls += 1;
       route.fulfill({
         status: 202,
         contentType: 'application/json',
         body: JSON.stringify({ uid: 'job-1', status: 'Pending', expectedSeconds: 2 }),
-      }),
-    );
-    await page.route(MERGE_JOB_ENDPOINT, (route) =>
+      });
+    });
+    await page.route(MERGE_JOB_ENDPOINT, (route) => {
+      jobCalls += 1;
       route.fulfill({
         status: 200,
         contentType: 'application/json',
         body: JSON.stringify({ uid: 'job-1', status: 'Failed' }),
-      }),
-    );
+      });
+    });
     await page.goto('/account-merge/?otp=abc');
     await expect(page.locator('#state-unavailable')).toBeVisible({ timeout: 10000 });
+    expect(confirmCalls).toBe(1);
+    expect(jobCalls).toBe(1);
   });
 
   test('confirmed state shows the RealUnit logo', async ({ page }) => {
