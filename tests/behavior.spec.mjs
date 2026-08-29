@@ -557,6 +557,83 @@ test.describe('account-merge flow', () => {
     await expect(page.locator('#state-invalid h1')).toHaveText(expected);
   });
 
+  test('an empty otp shows the invalid state and makes no confirm request', async ({ page }) => {
+    const confirmCalls = [];
+    await page.route(MERGE_CONFIRM_ENDPOINT, (route) => {
+      confirmCalls.push(route.request().url());
+      route.fulfill({ status: 200, contentType: 'application/json', body: '{}' });
+    });
+    await page.goto('/account-merge/?otp=');
+    await expect(page.locator('#state-invalid')).toBeVisible();
+    expect(confirmCalls).toEqual([]);
+  });
+
+  test('a 404 response shows the invalid state', async ({ page }) => {
+    await page.route(MERGE_CONFIRM_ENDPOINT, (route) =>
+      route.fulfill({ status: 404, contentType: 'application/json', body: '{}' }),
+    );
+    await page.goto('/account-merge/?otp=abc');
+    await expect(page.locator('#state-invalid')).toBeVisible();
+  });
+
+  test('a 202 ticket already DeadLetter skips job polling and shows unavailable', async ({ page }) => {
+    let jobCalls = 0;
+    await page.route(MERGE_CONFIRM_ENDPOINT, (route) =>
+      route.fulfill({
+        status: 202,
+        contentType: 'application/json',
+        body: JSON.stringify({ uid: 'job-1', status: 'DeadLetter', expectedSeconds: 2 }),
+      }),
+    );
+    await page.route(MERGE_JOB_ENDPOINT, (route) => {
+      jobCalls += 1;
+      route.fulfill({ status: 200, contentType: 'application/json', body: '{}' });
+    });
+    await page.goto('/account-merge/?otp=abc');
+    await expect(page.locator('#state-unavailable')).toBeVisible({ timeout: 10000 });
+    expect(jobCalls).toBe(0);
+  });
+
+  test('a job that becomes Failed after polling shows unavailable', async ({ page }) => {
+    await page.route(MERGE_CONFIRM_ENDPOINT, (route) =>
+      route.fulfill({
+        status: 202,
+        contentType: 'application/json',
+        body: JSON.stringify({ uid: 'job-1', status: 'Pending', expectedSeconds: 2 }),
+      }),
+    );
+    await page.route(MERGE_JOB_ENDPOINT, (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ uid: 'job-1', status: 'Failed' }),
+      }),
+    );
+    await page.goto('/account-merge/?otp=abc');
+    await expect(page.locator('#state-unavailable')).toBeVisible({ timeout: 10000 });
+  });
+
+  test('confirmed state shows the RealUnit logo', async ({ page }) => {
+    await page.route(MERGE_CONFIRM_ENDPOINT, (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ kycHash: 'x' }),
+      }),
+    );
+    await page.goto('/account-merge/?otp=abc');
+    await expect(page.locator('#state-confirmed')).toBeVisible();
+    await expect(page.locator('img.logo')).toBeVisible();
+    await expect(page.locator('img.logo')).toHaveAttribute('src', '/assets/realunit-logo.png');
+  });
+
+  test('?lang=de renders German copy and sets <html lang="de">', async ({ page }) => {
+    await page.goto('/account-merge/?mock=invalid&lang=de');
+    await expect(page.locator('html')).toHaveAttribute('lang', 'de');
+    const expected = await page.evaluate(() => window.RealUnitMerge.I18N.de['invalid.title']);
+    await expect(page.locator('#state-invalid h1')).toHaveText(expected);
+  });
+
   test('an ?api= override sends the confirmation to that API base', async ({ page }) => {
     let requestedUrl = null;
     await page.route(MERGE_CONFIRM_ENDPOINT, (route) => {
